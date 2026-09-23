@@ -1,0 +1,24 @@
+# Competition data: huge, and belongs to the organisers - never upload
+datasets/
+
+# Virtual environment: can be rebuilt from the requirements files
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Mac system files
+.DS_Store
+
+# LaTeX build by-products
+notes/*.aux
+notes/*.log
+notes/*.out
+notes/*.toc
+notes/*.fls
+notes/*.fdb_latexmk
+notes/*.synctex.gz
+
+# Zip archives (submissions, downloads)
+*.zip
