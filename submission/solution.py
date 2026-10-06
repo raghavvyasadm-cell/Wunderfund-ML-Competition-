@@ -4,35 +4,84 @@ import numpy as np
 
 from features import FEATURE_VERSION, N_MEMORY, N_RAW, N_STATELESS, StreamingFeatures
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "linear_model.npz")
+HERE = os.path.dirname(os.path.abspath(__file__))
+ONNX_PATH = os.path.join(HERE, "mlp_model.onnx")
+NPZ_PATH = os.path.join(HERE, "linear_model.npz")
 PREDICTION_CLIP = 10.0      # last line of defence: predictions must be finite
+VALID_WIDTHS = (N_RAW, N_RAW + N_STATELESS, N_RAW + N_STATELESS + N_MEMORY)
 
 
-class PredictionModel:
-    def __init__(self):
-        model = np.load(MODEL_PATH)
+class OnnxModel:
+    """A network exported to ONNX. Standardisation is baked into the graph."""
+
+    def __init__(self, path):
+        import onnxruntime as ort
+
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = 1      # the container has one CPU
+        options.inter_op_num_threads = 1
+        self.session = ort.InferenceSession(path, options,
+                                            providers=["CPUExecutionProvider"])
+        self.input_name = self.session.get_inputs()[0].name
+
+        meta = self.session.get_modelmeta().custom_metadata_map
+        version = meta.get("feature_version", "unknown")
+        if version != FEATURE_VERSION:
+            raise ValueError(f"model was trained on features '{version}', "
+                             f"but features.py is '{FEATURE_VERSION}' - retrain")
+        self.n_features = int(meta.get("n_features", VALID_WIDTHS[-1]))
+        self._batch = np.empty((1, self.n_features), dtype=np.float32)
+
+    def __call__(self, full):
+        self._batch[0] = full[:self.n_features]
+        return self.session.run(None, {self.input_name: self._batch})[0][0]
+
+
+class LinearModel:
+    """The earlier model: standardise, then one dot product."""
+
+    def __init__(self, path):
+        model = np.load(path)
         self.mean = model["mean"].astype(np.float64)
         self.scale = model["scale"].astype(np.float64)
         self.coef = model["coef"].astype(np.float64)            # (2, n_features)
-        self.intercept = model["intercept"].astype(np.float64)  # (2,)
+        self.intercept = model["intercept"].astype(np.float64)
         self.std_clip = float(model["std_clip"])
         self.n_features = self.coef.shape[1]
 
-        # A model trained on a different feature set would still "work": the
-        # columns would line up by position and mean something else entirely.
-        # Fail loudly instead.
         version = str(model["feature_version"]) if "feature_version" in model else "unknown"
         if version != FEATURE_VERSION:
             raise ValueError(f"model was trained on features '{version}', "
                              f"but features.py is '{FEATURE_VERSION}' - retrain")
-        if self.n_features not in (N_RAW, N_RAW + N_STATELESS,
-                                   N_RAW + N_STATELESS + N_MEMORY):
-            raise ValueError(f"model expects {self.n_features} features, "
-                             f"which matches no feature set in features.py")
+        self._z = np.empty(self.n_features)
 
+    def __call__(self, full):
+        z = self._z
+        np.subtract(full[:self.n_features], self.mean, out=z)
+        np.divide(z, self.scale, out=z)
+        np.clip(z, -self.std_clip, self.std_clip, out=z)
+        pred = self.coef @ z
+        pred += self.intercept
+        if not np.isfinite(pred).all():
+            np.nan_to_num(z, copy=False, nan=0.0,
+                          posinf=self.std_clip, neginf=-self.std_clip)
+            pred = self.coef @ z + self.intercept
+        return pred
+
+
+class PredictionModel:
+    def __init__(self):
+        if os.path.exists(ONNX_PATH):
+            self.model = OnnxModel(ONNX_PATH)
+        elif os.path.exists(NPZ_PATH):
+            self.model = LinearModel(NPZ_PATH)
+        else:
+            raise FileNotFoundError("no model file found next to solution.py")
+        if self.model.n_features not in VALID_WIDTHS:
+            raise ValueError(f"model expects {self.model.n_features} features, "
+                             f"which matches no feature set in features.py")
         self.features = StreamingFeatures()
         self.seq_ix = None
-        self._z = np.empty(self.n_features)                     # reused scratch space
 
     def predict(self, data_point):
         # A new sequence means the memory features start again from nothing
@@ -46,25 +95,10 @@ class PredictionModel:
         if not data_point.need_prediction:
             return None
 
-        # Same standardisation as training: centre, rescale, clip
-        z = self._z
-        np.subtract(full[:self.n_features], self.mean, out=z)
-        np.divide(z, self.scale, out=z)
-        np.clip(z, -self.std_clip, self.std_clip, out=z)
+        pred = np.asarray(self.model(full), dtype=np.float64)
 
-        # The model itself: one dot product
-        pred = self.coef @ z
-        pred += self.intercept
-
-        # Non-finite predictions are a submission error, so check and repair.
-        # Checking the two outputs is far cheaper than scrubbing 175 inputs
-        # on every row, and nothing else can turn a finite input into NaN.
+        # Non-finite predictions are a submission error, so check and repair
         if not np.isfinite(pred).all():
-            np.nan_to_num(z, copy=False, nan=0.0,
-                          posinf=self.std_clip, neginf=-self.std_clip)
-            pred = self.coef @ z + self.intercept
-            np.nan_to_num(pred, copy=False, nan=0.0,
-                          posinf=PREDICTION_CLIP, neginf=-PREDICTION_CLIP)
-
-        np.clip(pred, -PREDICTION_CLIP, PREDICTION_CLIP, out=pred)
-        return pred
+            pred = np.nan_to_num(pred, nan=0.0, posinf=PREDICTION_CLIP,
+                                 neginf=-PREDICTION_CLIP)
+        return np.clip(pred, -PREDICTION_CLIP, PREDICTION_CLIP).astype(np.float32)

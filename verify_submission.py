@@ -11,7 +11,8 @@ SUBMISSION_DIR = "submission"
 VALID_FILE = "datasets/valid.parquet"
 N_SEQUENCES = 2            # how many sequences to run through
 TEST_ROWS = 39_400_000     # size of the real test set, for the time estimate
-REQUIRED = ["solution.py", "features.py", "linear_model.npz"]
+REQUIRED = ["solution.py", "features.py"]
+MODEL_FILES = ["mlp_model.onnx", "linear_model.npz"]   # at least one of these
 ALLOWED_IMPORTS = {"numpy", "onnxruntime", "pyarrow"}
 BLOCKED = ["pandas", "sklearn", "scipy", "matplotlib", "torch"]
 
@@ -62,6 +63,10 @@ def main():
         print(f"  {'OK  ' if exists else 'MISS'} {name}")
         if not exists:
             problems.append(f"{name} is missing")
+    models = [m for m in MODEL_FILES if (folder / m).exists()]
+    print(f"  {'OK  ' if models else 'MISS'} model file: {', '.join(models) or 'none'}")
+    if not models:
+        problems.append("no model file")
     if problems:
         print("\nFAILED: " + "; ".join(problems))
         return

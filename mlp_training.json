@@ -1,0 +1,11 @@
+{
+  "configuration": "slower learning",
+  "held_out": 0.6233329901057107,
+  "t0": 0.6371238170573928,
+  "t1": 0.6095421631540286,
+  "tuning": 0.6651909386415165,
+  "epoch": 2,
+  "train_rows": 1592800,
+  "feature_version": "v5-trade-family",
+  "n_features": 208
+}
