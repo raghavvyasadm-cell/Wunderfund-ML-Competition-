@@ -15,7 +15,7 @@ def main():
     batch, stateless_names, memory_names_ = build_sequence(x)
 
     stream = StreamingFeatures()
-    rows = [stream.update(x[t]) for t in range(len(x))]
+    rows = [stream.update(x[t]).copy() for t in range(len(x))]   # copy: be explicit
     streamed = np.vstack(rows)
 
     print(f"batch:     {batch.shape}")
@@ -27,10 +27,15 @@ def main():
         print("MISMATCH: different shapes")
         return
     gap = np.abs(batch - streamed).max()
-    print(f"largest difference: {gap:.3e}")
-    print("PASS: the two agree" if gap < 1e-9 else "FAIL: they disagree")
+    # Compare relative to the size of the numbers involved: a difference of
+    # 1e-9 is nothing next to a feature of size 1000, and everything next to a
+    # feature of size 1e-6.
+    scale = max(1.0, np.abs(batch).max())
+    tolerance = 1e-9 * scale
+    print(f"largest difference: {gap:.3e}   tolerance: {tolerance:.3e}")
+    print("PASS: the two agree" if gap < tolerance else "FAIL: they disagree")
 
-    if gap >= 1e-9:
+    if gap >= tolerance:
         worst = np.unravel_index(np.argmax(np.abs(batch - streamed)), batch.shape)
         names = list(FEATURE_COLUMNS) + stateless_names + memory_names_
         print(f"  worst at row {worst[0]}, feature {names[worst[1]]}")

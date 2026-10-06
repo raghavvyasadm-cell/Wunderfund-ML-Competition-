@@ -2,7 +2,7 @@ import os
 
 import numpy as np
 
-from features import StreamingFeatures
+from features import FEATURE_VERSION, N_MEMORY, N_RAW, N_STATELESS, StreamingFeatures
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "linear_model.npz")
 PREDICTION_CLIP = 10.0      # last line of defence: predictions must be finite
@@ -17,6 +17,18 @@ class PredictionModel:
         self.intercept = model["intercept"].astype(np.float64)  # (2,)
         self.std_clip = float(model["std_clip"])
         self.n_features = self.coef.shape[1]
+
+        # A model trained on a different feature set would still "work": the
+        # columns would line up by position and mean something else entirely.
+        # Fail loudly instead.
+        version = str(model["feature_version"]) if "feature_version" in model else "unknown"
+        if version != FEATURE_VERSION:
+            raise ValueError(f"model was trained on features '{version}', "
+                             f"but features.py is '{FEATURE_VERSION}' - retrain")
+        if self.n_features not in (N_RAW, N_RAW + N_STATELESS,
+                                   N_RAW + N_STATELESS + N_MEMORY):
+            raise ValueError(f"model expects {self.n_features} features, "
+                             f"which matches no feature set in features.py")
 
         self.features = StreamingFeatures()
         self.seq_ix = None

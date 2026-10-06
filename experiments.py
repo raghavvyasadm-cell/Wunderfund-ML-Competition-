@@ -3,7 +3,7 @@ import pyarrow.parquet as pq
 from sklearn.linear_model import Ridge
 
 from utils import FEATURE_COLUMNS, TARGET_COLUMNS, WARMUP, METRIC_CLIP, weighted_pearson
-from features import build_sequence
+from features import FEATURE_VERSION, build_sequence
 
 np.seterr(over="ignore", divide="ignore", invalid="ignore")   # Accelerate noise on Apple Silicon
 
@@ -152,7 +152,8 @@ def main():
     np.savez("linear_model.npz", mean=r["mean"].astype(np.float32),
              scale=r["scale"].astype(np.float32), coef=r["coef"].astype(np.float32),
              intercept=r["intercept"].astype(np.float32), std_clip=STD_CLIP,
-             alpha=r["alpha"], mode=mode, experiment=name)
+             alpha=r["alpha"], mode=mode, experiment=name,
+             feature_version=FEATURE_VERSION)
     print("Saved the winning model to linear_model.npz")
 
     names = list(FEATURE_COLUMNS) + stateless_names + mem_names
